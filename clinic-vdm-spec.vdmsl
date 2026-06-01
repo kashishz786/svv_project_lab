@@ -1,0 +1,342 @@
+-- ============================================================
+-- VDM Specification: Clinic Appointment System
+-- Tool: Overture / VDMTools
+-- Project: SVV Semester Project — Lahore Garrison University
+-- Date: May 2026
+-- ============================================================
+
+class ClinicAppointmentSystem
+
+  -- ==========================================================
+  -- TYPE DEFINITIONS
+  -- ==========================================================
+
+  types
+
+    PatientId  = nat;
+    DoctorId   = nat;
+    SlotId     = nat;
+    AppointmentId = nat;
+    PrescriptionId = nat;
+
+    AppointmentStatus = <BOOKED> | <APPROVED> | <COMPLETED> | <CANCELLED>;
+
+    Appointment ::
+      apptId   : AppointmentId
+      patientId: PatientId
+      doctorId : DoctorId
+      slotId   : SlotId
+      status   : AppointmentStatus;
+
+    Prescription ::
+      presId   : PrescriptionId
+      apptId   : AppointmentId
+      patientId: PatientId
+      diagnosis: seq of char
+      medications: set of (seq of char);
+
+  -- ==========================================================
+  -- SYSTEM STATE
+  -- ==========================================================
+
+  state ClinicSystem of
+    patients             : set of PatientId
+    doctors              : set of DoctorId
+    authenticatedDoctors : set of DoctorId
+    availableSlots       : map DoctorId to set of SlotId
+    appointments         : map AppointmentId to Appointment
+    prescriptions        : map PrescriptionId to Prescription
+
+  -- INVARIANT: INV-1 — No patient double-booking at same slot
+  --            INV-2 — No doctor double-booking at same slot
+  --            INV-3 — Prescriptions reference completed appointments
+  --            INV-4 — authenticated ⊆ doctors
+
+  inv mk_ClinicSystem(pts, drs, authDrs, slots, appts, presc) ==
+
+    -- INV-1: Patient cannot have two active appointments at same slot
+    (forall a1 in set rng appts, a2 in set rng appts &
+        a1.patientId = a2.patientId and a1.slotId = a2.slotId
+        and a1.status not in set {<CANCELLED>}
+        and a2.status not in set {<CANCELLED>}
+        => a1.apptId = a2.apptId)
+
+    and
+
+    -- INV-2: Doctor cannot have two active appointments at same slot
+    (forall a1 in set rng appts, a2 in set rng appts &
+        a1.doctorId = a2.doctorId and a1.slotId = a2.slotId
+        and a1.status not in set {<CANCELLED>}
+        and a2.status not in set {<CANCELLED>}
+        => a1.apptId = a2.apptId)
+
+    and
+
+    -- INV-3: Prescriptions reference only COMPLETED appointments
+    (forall p in set rng presc &
+        p.apptId in set dom appts
+        and appts(p.apptId).status = <COMPLETED>)
+
+    and
+
+    -- INV-4: Authenticated doctors must be registered
+    authDrs subset drs
+
+  -- INITIAL STATE
+  init s == s = mk_ClinicSystem({}, {}, {}, {|->}, {|->}, {|->})
+
+  -- ==========================================================
+  -- OPERATIONS
+  -- ==========================================================
+
+  -- ----------------------------------------------------------
+  -- REGISTER PATIENT
+  -- ----------------------------------------------------------
+  operations
+
+  RegisterPatient : PatientId ==> ()
+  RegisterPatient(pid) ==
+  (
+    patients := patients union {pid}
+  )
+  pre pid not in set patients
+  post pid in set patients;
+
+  -- ----------------------------------------------------------
+  -- REGISTER DOCTOR
+  -- ----------------------------------------------------------
+
+  RegisterDoctor : DoctorId * set of SlotId ==> ()
+  RegisterDoctor(did, slots) ==
+  (
+    doctors        := doctors union {did};
+    availableSlots := availableSlots munion {did |-> slots}
+  )
+  pre did not in set doctors
+  post did in set doctors and availableSlots(did) = slots;
+
+  -- ----------------------------------------------------------
+  -- AUTHENTICATE DOCTOR
+  -- ----------------------------------------------------------
+
+  AuthenticateDoctor : DoctorId ==> ()
+  AuthenticateDoctor(did) ==
+  (
+    authenticatedDoctors := authenticatedDoctors union {did}
+  )
+  pre did in set doctors
+  post did in set authenticatedDoctors;
+
+  -- ----------------------------------------------------------
+  -- BOOK APPOINTMENT
+  -- creates an appointment with status BOOKED
+  -- ----------------------------------------------------------
+
+  BookAppointment : PatientId * DoctorId * SlotId * AppointmentId ==> ()
+  BookAppointment(pid, did, sid, aid) ==
+  (
+    let newAppt = mk_Appointment(aid, pid, did, sid, <BOOKED>) in
+      appointments := appointments munion {aid |-> newAppt}
+  )
+  pre
+    -- P1: patient is registered
+    pid in set patients
+    and
+    -- P2: doctor is registered
+    did in set doctors
+    and
+    -- P3: slot is available for this doctor
+    did in set dom availableSlots and sid in set availableSlots(did)
+    and
+    -- P4: patient has no active appointment at this slot
+    not exists a in set rng appointments &
+      a.patientId = pid and a.slotId = sid
+      and a.status not in set {<CANCELLED>}
+    and
+    -- P5: appointment ID is fresh
+    aid not in set dom appointments
+  post
+    aid in set dom appointments
+    and appointments(aid).status = <BOOKED>
+    and appointments(aid).patientId = pid
+    and appointments(aid).doctorId = did
+    and appointments(aid).slotId = sid;
+
+  -- ----------------------------------------------------------
+  -- APPROVE APPOINTMENT
+  -- transitions: BOOKED -> APPROVED
+  -- removes slot from available set
+  -- ----------------------------------------------------------
+
+  ApproveAppointment : AppointmentId * DoctorId ==> ()
+  ApproveAppointment(aid, did) ==
+  (
+    let a = appointments(aid) in
+    (
+      appointments   := appointments ++ {aid |-> mk_Appointment(
+                          aid, a.patientId, a.doctorId, a.slotId, <APPROVED>)};
+      availableSlots := availableSlots ++ {did |->
+                          availableSlots(did) \ {a.slotId}}
+    )
+  )
+  pre
+    -- P1: appointment exists
+    aid in set dom appointments
+    and
+    -- P2: appointment is in BOOKED status
+    appointments(aid).status = <BOOKED>
+    and
+    -- P3: doctor owns this appointment
+    appointments(aid).doctorId = did
+    and
+    -- P4: doctor is authenticated
+    did in set authenticatedDoctors
+  post
+    appointments(aid).status = <APPROVED>
+    and appointments(aid).slotId not in set availableSlots(did);
+
+  -- ----------------------------------------------------------
+  -- REJECT APPOINTMENT
+  -- transitions: BOOKED -> CANCELLED (slot stays available)
+  -- ----------------------------------------------------------
+
+  RejectAppointment : AppointmentId * DoctorId ==> ()
+  RejectAppointment(aid, did) ==
+  (
+    let a = appointments(aid) in
+      appointments := appointments ++ {aid |-> mk_Appointment(
+                        aid, a.patientId, a.doctorId, a.slotId, <CANCELLED>)}
+  )
+  pre
+    -- P1: appointment exists
+    aid in set dom appointments
+    and
+    -- P2: appointment must be BOOKED (cannot reject Approved/Completed)
+    appointments(aid).status = <BOOKED>
+    and
+    -- P3: doctor owns this appointment
+    appointments(aid).doctorId = did
+    and
+    -- P4: doctor is authenticated
+    did in set authenticatedDoctors
+  post
+    appointments(aid).status = <CANCELLED>;
+
+  -- ----------------------------------------------------------
+  -- CANCEL APPOINTMENT
+  -- transitions: BOOKED|APPROVED -> CANCELLED
+  -- if APPROVED, slot is returned to available set
+  -- ----------------------------------------------------------
+
+  CancelAppointment : AppointmentId ==> ()
+  CancelAppointment(aid) ==
+  (
+    let a = appointments(aid) in
+    (
+      appointments := appointments ++ {aid |-> mk_Appointment(
+                        aid, a.patientId, a.doctorId, a.slotId, <CANCELLED>)};
+      if a.status = <APPROVED> then
+        availableSlots := availableSlots ++
+          {a.doctorId |-> availableSlots(a.doctorId) union {a.slotId}}
+    )
+  )
+  pre
+    -- P1: appointment exists
+    aid in set dom appointments
+    and
+    -- P2: appointment is cancellable (not COMPLETED or already CANCELLED)
+    appointments(aid).status in set {<BOOKED>, <APPROVED>}
+  post
+    appointments(aid).status = <CANCELLED>;
+
+  -- ----------------------------------------------------------
+  -- COMPLETE APPOINTMENT
+  -- transitions: APPROVED -> COMPLETED
+  -- after this, no further modifications are permitted
+  -- ----------------------------------------------------------
+
+  CompleteAppointment : AppointmentId * DoctorId ==> ()
+  CompleteAppointment(aid, did) ==
+  (
+    let a = appointments(aid) in
+      appointments := appointments ++ {aid |-> mk_Appointment(
+                        aid, a.patientId, a.doctorId, a.slotId, <COMPLETED>)}
+  )
+  pre
+    -- P1: appointment exists
+    aid in set dom appointments
+    and
+    -- P2: appointment must be in APPROVED status
+    appointments(aid).status = <APPROVED>
+    and
+    -- P3: completing doctor owns appointment
+    appointments(aid).doctorId = did
+    and
+    -- P4: doctor is authenticated
+    did in set authenticatedDoctors
+  post
+    appointments(aid).status = <COMPLETED>;
+
+  -- ----------------------------------------------------------
+  -- ADD PRESCRIPTION
+  -- can only be added to a COMPLETED appointment
+  -- ----------------------------------------------------------
+
+  AddPrescription : PrescriptionId * AppointmentId * DoctorId
+                    * seq of char * set of (seq of char) ==> ()
+  AddPrescription(pid, aid, did, diag, meds) ==
+  (
+    let a = appointments(aid) in
+    let newPres = mk_Prescription(pid, aid, a.patientId, diag, meds) in
+      prescriptions := prescriptions munion {pid |-> newPres}
+  )
+  pre
+    -- P1: appointment exists and is COMPLETED
+    aid in set dom appointments
+    and appointments(aid).status = <COMPLETED>
+    and
+    -- P2: prescription ID is unique
+    pid not in set dom prescriptions
+    and
+    -- P3: doctor is authenticated
+    did in set authenticatedDoctors
+  post
+    pid in set dom prescriptions
+    and prescriptions(pid).apptId = aid
+    and prescriptions(pid).diagnosis = diag;
+
+  -- ==========================================================
+  -- PURE FUNCTIONS (query operations)
+  -- ==========================================================
+
+  functions
+
+  -- CHECK SLOT AVAILABILITY
+  IsSlotAvailable : DoctorId * SlotId * map DoctorId to set of SlotId -> bool
+  IsSlotAvailable(did, sid, slots) ==
+    did in set dom slots and sid in set slots(did);
+
+  -- GET APPOINTMENT STATUS
+  GetAppointmentStatus : AppointmentId * map AppointmentId to Appointment
+                         -> [AppointmentStatus]
+  GetAppointmentStatus(aid, appts) ==
+    if aid in set dom appts
+    then appts(aid).status
+    else nil;
+
+  -- COUNT ACTIVE APPOINTMENTS FOR PATIENT
+  CountActiveAppointments : PatientId * map AppointmentId to Appointment -> nat
+  CountActiveAppointments(pid, appts) ==
+    card {a | a in set rng appts &
+              a.patientId = pid and a.status not in set {<CANCELLED>}};
+
+  -- GET PRESCRIPTION FOR APPOINTMENT
+  GetPrescription : AppointmentId * map PrescriptionId to Prescription
+                    -> [Prescription]
+  GetPrescription(aid, presc) ==
+    let matching = {p | p in set rng presc & p.apptId = aid} in
+      if matching = {}
+      then nil
+      else let p in set matching in p;
+
+end ClinicAppointmentSystem
