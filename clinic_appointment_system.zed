@@ -1,0 +1,402 @@
+%%% Clinic Appointment System — Z Formal Model
+%%% SVV Project | CZT (Community Z Tools) Compatible
+%%% Date: May 2026
+%%%
+%%% HOW TO USE:
+%%%   Open this file in CZT Editor (Community Z Tools)
+%%%   or use: czt typecheck clinic_appointment_system.zed
+
+\begin{zsection}
+  \SECTION ClinicAppointmentSystem \parents standard\_toolkit
+\end{zsection}
+
+%%─────────────────────────────────────────────────────────────
+%% 1. GIVEN SETS (Basic Types)
+%%─────────────────────────────────────────────────────────────
+
+\begin{zed}
+  [PATIENT, DOCTOR, SLOT, PRESCRIPTION\_ID]
+\end{zed}
+
+%%─────────────────────────────────────────────────────────────
+%% 2. APPOINTMENT STATUS ENUMERATION
+%%─────────────────────────────────────────────────────────────
+
+\begin{zed}
+  AppointmentStatus ::= AVAILABLE | BOOKED | APPROVED | COMPLETED | CANCELLED
+\end{zed}
+
+%%─────────────────────────────────────────────────────────────
+%% 3. APPOINTMENT SCHEMA
+%%─────────────────────────────────────────────────────────────
+
+\begin{schema}{Appointment}
+  apptId  : \nat \\
+  patient : PATIENT \\
+  doctor  : DOCTOR \\
+  slot    : SLOT \\
+  status  : AppointmentStatus
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 4. SYSTEM STATE SCHEMA
+%%─────────────────────────────────────────────────────────────
+
+\begin{schema}{ClinicSystem}
+  patients             : \power PATIENT \\
+  doctors              : \power DOCTOR \\
+  authenticatedDoctors : \power DOCTOR \\
+  availableSlots       : DOCTOR \rel SLOT \\
+  appointments         : \nat \pfun Appointment \\
+  prescriptions        : PRESCRIPTION\_ID \pfun (\nat \cross PATIENT)
+\where
+  %% INV-1: A patient cannot have two active appointments at the same slot
+  \forall a1, a2 : \ran appointments @ \\
+  \t1 a1.patient = a2.patient \land a1.slot = a2.slot \\
+  \t1 \land a1.status \notin \{CANCELLED\} \land a2.status \notin \{CANCELLED\} \\
+  \t1 \implies a1 = a2 \\
+
+  %% INV-2: A doctor cannot have two active appointments at the same slot
+  \forall a1, a2 : \ran appointments @ \\
+  \t1 a1.doctor = a2.doctor \land a1.slot = a2.slot \\
+  \t1 \land a1.status \notin \{CANCELLED\} \land a2.status \notin \{CANCELLED\} \\
+  \t1 \implies a1 = a2 \\
+
+  %% INV-3: Prescriptions reference only COMPLETED appointments
+  \forall pid : \dom prescriptions @ \\
+  \t1 \LET (apptId, \_) == prescriptions(pid) @ \\
+  \t2 apptId \in \dom appointments \\
+  \t2 \land (appointments(apptId)).status = COMPLETED \\
+
+  %% INV-4: Authenticated doctors must be a subset of registered doctors
+  authenticatedDoctors \subseteq doctors \\
+
+  %% INV-5: Available slots must belong to registered doctors
+  \dom availableSlots \subseteq doctors
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 5. INITIALIZATION SCHEMA
+%%─────────────────────────────────────────────────────────────
+
+\begin{schema}{InitClinicSystem}
+  ClinicSystem
+\where
+  patients             = \emptyset \\
+  doctors              = \emptyset \\
+  authenticatedDoctors = \emptyset \\
+  availableSlots       = \emptyset \\
+  appointments         = \emptyset \\
+  prescriptions        = \emptyset
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 6. OPERATION SCHEMAS
+%%─────────────────────────────────────────────────────────────
+
+%% ── 6.1 RegisterPatient ──────────────────────────────────────
+
+\begin{schema}{RegisterPatient}
+  \Delta ClinicSystem \\
+  newPatient? : PATIENT
+\where
+  %% PRE: patient not already registered
+  newPatient? \notin patients \\
+
+  %% POST: patient added to registered set
+  patients'             = patients \cup \{newPatient?\} \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  availableSlots'       = availableSlots \\
+  appointments'         = appointments \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.2 RegisterDoctor ───────────────────────────────────────
+
+\begin{schema}{RegisterDoctor}
+  \Delta ClinicSystem \\
+  newDoctor? : DOCTOR
+\where
+  %% PRE: doctor not already registered
+  newDoctor? \notin doctors \\
+
+  %% POST: doctor added to registered set
+  doctors'              = doctors \cup \{newDoctor?\} \\
+  patients'             = patients \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  availableSlots'       = availableSlots \\
+  appointments'         = appointments \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.3 AuthenticateDoctor ───────────────────────────────────
+
+\begin{schema}{AuthenticateDoctor}
+  \Delta ClinicSystem \\
+  doc? : DOCTOR
+\where
+  %% PRE: doctor must be registered before authentication
+  doc? \in doctors \\
+
+  %% POST: doctor added to authenticated set
+  authenticatedDoctors' = authenticatedDoctors \cup \{doc?\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  availableSlots'       = availableSlots \\
+  appointments'         = appointments \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.4 AddAvailableSlot ─────────────────────────────────────
+
+\begin{schema}{AddAvailableSlot}
+  \Delta ClinicSystem \\
+  doc? : DOCTOR \\
+  slot? : SLOT
+\where
+  %% PRE: doctor must be registered
+  doc? \in doctors \\
+
+  %% PRE: slot not already available for this doctor
+  (doc?, slot?) \notin availableSlots \\
+
+  %% POST: slot added to available slots for doctor
+  availableSlots'       = availableSlots \cup \{(doc?, slot?)\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  appointments'         = appointments \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.5 BookAppointment ──────────────────────────────────────
+
+\begin{schema}{BookAppointment}
+  \Delta ClinicSystem \\
+  p?  : PATIENT \\
+  d?  : DOCTOR \\
+  s?  : SLOT \\
+  id! : \nat
+\where
+  %% PRE P1: patient is registered
+  p? \in patients \\
+
+  %% PRE P2: doctor is registered
+  d? \in doctors \\
+
+  %% PRE P3: slot is available for this doctor
+  (d?, s?) \in availableSlots \\
+
+  %% PRE P4: patient has no active appointment at this slot
+  \lnot \exists a : \ran appointments @ \\
+  \t1 a.patient = p? \land a.slot = s? \land a.status \notin \{CANCELLED\} \\
+
+  %% PRE P5: new appointment ID must be fresh
+  id! \notin \dom appointments \\
+
+  %% POST: new appointment created with BOOKED status
+  appointments' = appointments \oplus \\
+  \t1 \{id! \mapsto \theta Appointment'(id!, p?, d?, s?, BOOKED)\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  availableSlots'       = availableSlots \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.6 ApproveAppointment ───────────────────────────────────
+
+\begin{schema}{ApproveAppointment}
+  \Delta ClinicSystem \\
+  apptId? : \nat \\
+  doc?    : DOCTOR
+\where
+  %% PRE P1: appointment must exist
+  apptId? \in \dom appointments \\
+
+  %% PRE P2: appointment must be in BOOKED status
+  (appointments(apptId?)).status = BOOKED \\
+
+  %% PRE P3: approving doctor must own the appointment
+  (appointments(apptId?)).doctor = doc? \\
+
+  %% PRE P4: doctor must be authenticated
+  doc? \in authenticatedDoctors \\
+
+  %% POST: status transitions to APPROVED; slot removed from available set
+  \LET a == appointments(apptId?) @ \\
+  \t1 appointments' = appointments \oplus \\
+  \t2 \{apptId? \mapsto \theta Appointment'(apptId?, a.patient, a.doctor, a.slot, APPROVED)\} \\
+  \t1 \land availableSlots' = availableSlots \setminus \{(a.doctor, a.slot)\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.7 CancelAppointment ────────────────────────────────────
+
+\begin{schema}{CancelAppointment}
+  \Delta ClinicSystem \\
+  apptId? : \nat \\
+  actor?  : PATIENT \cup DOCTOR
+\where
+  %% PRE P1: appointment must exist
+  apptId? \in \dom appointments \\
+
+  %% PRE P2: appointment must be in BOOKED or APPROVED status
+  (appointments(apptId?)).status \in \{BOOKED, APPROVED\} \\
+
+  %% PRE P3: actor must be the patient or assigned doctor
+  \LET a == appointments(apptId?) @ \\
+  \t1 actor? = a.patient \lor actor? = a.doctor \\
+
+  %% POST: status set to CANCELLED
+  %% POST: if was APPROVED, slot is returned to available set
+  \LET a == appointments(apptId?) @ \\
+  \t1 appointments' = appointments \oplus \\
+  \t2 \{apptId? \mapsto \theta Appointment'(apptId?, a.patient, a.doctor, a.slot, CANCELLED)\} \\
+  \t1 \land (a.status = APPROVED \implies \\
+  \t2 availableSlots' = availableSlots \cup \{(a.doctor, a.slot)\}) \\
+  \t1 \land (a.status = BOOKED \implies \\
+  \t2 availableSlots' = availableSlots) \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.8 CompleteAppointment ──────────────────────────────────
+
+\begin{schema}{CompleteAppointment}
+  \Delta ClinicSystem \\
+  apptId? : \nat \\
+  doc?    : DOCTOR
+\where
+  %% PRE P1: appointment must exist
+  apptId? \in \dom appointments \\
+
+  %% PRE P2: appointment must be APPROVED before completion
+  (appointments(apptId?)).status = APPROVED \\
+
+  %% PRE P3: completing doctor must own the appointment
+  (appointments(apptId?)).doctor = doc? \\
+
+  %% PRE P4: doctor must be authenticated
+  doc? \in authenticatedDoctors \\
+
+  %% POST: status transitions to COMPLETED
+  \LET a == appointments(apptId?) @ \\
+  \t1 appointments' = appointments \oplus \\
+  \t2 \{apptId? ↦ \theta Appointment'(apptId?, a.patient, a.doctor, a.slot, COMPLETED)\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  availableSlots'       = availableSlots \\
+  prescriptions'        = prescriptions
+\end{schema}
+
+%% ── 6.9 AddPrescription ──────────────────────────────────────
+
+\begin{schema}{AddPrescription}
+  \Delta ClinicSystem \\
+  apptId?  : \nat \\
+  presId?  : PRESCRIPTION\_ID \\
+  doc?     : DOCTOR
+\where
+  %% PRE P1: appointment must exist and be COMPLETED
+  apptId? \in \dom appointments \\
+  \land (appointments(apptId?)).status = COMPLETED \\
+
+  %% PRE P2: prescription ID must not already be in use
+  presId? \notin \dom prescriptions \\
+
+  %% PRE P3: writing doctor must be authenticated
+  doc? \in authenticatedDoctors \\
+
+  %% POST: prescription linked to appointment and patient
+  \LET a == appointments(apptId?) @ \\
+  \t1 prescriptions' = prescriptions \cup \\
+  \t2 \{presId? \mapsto (apptId?, a.patient)\} \\
+  patients'             = patients \\
+  doctors'              = doctors \\
+  authenticatedDoctors' = authenticatedDoctors \\
+  availableSlots'       = availableSlots \\
+  appointments'         = appointments
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 7. QUERY SCHEMAS (Xi — state unchanged)
+%%─────────────────────────────────────────────────────────────
+
+%% ── 7.1 GetAppointmentStatus ─────────────────────────────────
+
+\begin{schema}{GetAppointmentStatus}
+  \Xi ClinicSystem \\
+  apptId? : \nat \\
+  status! : AppointmentStatus
+\where
+  apptId? \in \dom appointments \\
+  status! = (appointments(apptId?)).status
+\end{schema}
+
+%% ── 7.2 GetPatientAppointments ───────────────────────────────
+
+\begin{schema}{GetPatientAppointments}
+  \Xi ClinicSystem \\
+  p?      : PATIENT \\
+  result! : \power Appointment
+\where
+  p? \in patients \\
+  result! = \{ a : \ran appointments | a.patient = p? \}
+\end{schema}
+
+%% ── 7.3 GetDoctorSchedule ────────────────────────────────────
+
+\begin{schema}{GetDoctorSchedule}
+  \Xi ClinicSystem \\
+  doc?    : DOCTOR \\
+  result! : \power Appointment
+\where
+  doc? \in doctors \\
+  result! = \{ a : \ran appointments | a.doctor = doc? \land a.status \notin \{CANCELLED\} \}
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 8. ERROR / EXCEPTION SCHEMAS
+%%─────────────────────────────────────────────────────────────
+
+\begin{zed}
+  ErrorMsg ::= \\
+  \t1 patientNotRegistered | doctorNotRegistered | slotNotAvailable | \\
+  \t1 doubleBookingError | appointmentNotFound | invalidStatusTransition | \\
+  \t1 unauthorizedActor | prescriptionIdInUse | appointmentNotCompleted
+\end{zed}
+
+\begin{schema}{BookAppointmentError}
+  \Xi ClinicSystem \\
+  p?   : PATIENT \\
+  d?   : DOCTOR \\
+  s?   : SLOT \\
+  err! : ErrorMsg
+\where
+  (p? \notin patients \implies err! = patientNotRegistered) \\
+  \land (d? \notin doctors \implies err! = doctorNotRegistered) \\
+  \land ((d?, s?) \notin availableSlots \implies err! = slotNotAvailable) \\
+  \land ((\exists a : \ran appointments @ \\
+  \t2 a.patient = p? \land a.slot = s? \land a.status \notin \{CANCELLED\}) \\
+  \t1 \implies err! = doubleBookingError)
+\end{schema}
+
+%%─────────────────────────────────────────────────────────────
+%% 9. ROBUSTNESS — Total Operations via Promotion
+%%─────────────────────────────────────────────────────────────
+
+\begin{zed}
+  RobustBookAppointment == BookAppointment \lor BookAppointmentError
+\end{zed}
+
+%%─────────────────────────────────────────────────────────────
+%% END OF SPECIFICATION
+%%─────────────────────────────────────────────────────────────
