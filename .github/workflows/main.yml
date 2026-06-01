@@ -1,0 +1,43 @@
+name: SVV CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Display Repository Files
+      run: |
+        echo "Project Files:"
+        ls -la
+
+    - name: Verify Markdown Files
+      run: |
+        test -f README.md
+        test -f SRS.md
+        test -f SVV_Project_Report.md
+        echo "Markdown files verified"
+
+    - name: Verify Formal Specification Files
+      run: |
+        test -f clinic_appointment_system.zed
+        test -f clinic-vdm-spec.vdmsl
+        test -f clinic-alloy-model.als
+        echo "Formal specification files verified"
+
+    - name: Check File Sizes
+      run: |
+        find . -type f -exec ls -lh {} \;
+
+    - name: CI Success
+      run: echo "SVV Project Validation Passed Successfully!"
